@@ -1,0 +1,13 @@
+{
+  "Prefix": "[{GREEN}PropsRemover{WHITE}] {WHITE}",
+  "NoPermissions": "You don't have permission to execute this command.",
+  "NoRegisteredProps": "No props registered for the map: {0}.",
+  "PropsRemoved": "All registered props for the map {0} have been removed.",
+  "ErrorRemovingProps": "Error while removing props: {0}.",
+  "Enabled": "enabled",
+  "Disabled": "disabled",
+  "Unknown": "Unknown",
+  "TogglePropRemoval": "Prop removal is now {0} (changed by {1}).",
+  "PropRemoved": "Prop removed: {0}.",
+  "TakeDamageError": "Error in OnTakeDamage: {0}."
+}
