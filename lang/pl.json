@@ -1,0 +1,13 @@
+{
+  "Prefix": "[{GREEN}PropsRemover{WHITE}] {WHITE}",
+  "NoPermissions": "Nie masz uprawnień do użycia tej komendy.",
+  "NoRegisteredProps": "Nie znaleziono propów dla mapy: {0}.",
+  "PropsRemoved": "Wszystkie znalezione propy dla mapy {0} zostały usunięte.",
+  "ErrorRemovingProps": "Błąd przy usuwaniu: {0}.",
+  "Enabled": "włączony",
+  "Disabled": "wyłączony",
+  "Unknown": "Nieznany",
+  "TogglePropRemoval": "Usunięcie propów jest teraz {0} (zmieniono przez {1}).",
+  "PropRemoved": "Usunięto prop: {0}.",
+  "TakeDamageError": "Błąd w OnTakeDamage: {0}."
+}
