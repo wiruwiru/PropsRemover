@@ -1,19 +1,19 @@
-﻿using System.Text.Json;
-using CounterStrikeSharp.API;
+﻿using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
 using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
+using System.Text.Json;
 
 namespace PropsRemover;
 
-[MinimumApiVersion(296)]
+[MinimumApiVersion(342)]
 public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
 {
     public override string ModuleName => "PropsRemover";
-    public override string ModuleVersion => "1.0.0";
+    public override string ModuleVersion => "1.0.1";
     public override string ModuleAuthor => "luca.uy";
     public override string ModuleDescription => "Automatically removes certain props on map start";
 
