@@ -1,25 +1,29 @@
 ﻿using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
-using CounterStrikeSharp.API.Modules.Memory;
-using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
-using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using System.Text.Json;
 
+using PropsRemover.Utils;
+using PropsRemover.Models;
+using PropsRemover.Configs;
+using PropsRemover.Commands;
+
 namespace PropsRemover;
 
-[MinimumApiVersion(342)]
+[MinimumApiVersion(363)]
 public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
 {
     public override string ModuleName => "PropsRemover";
-    public override string ModuleVersion => "1.0.1";
+    public override string ModuleVersion => "1.0.2";
     public override string ModuleAuthor => "luca.uy";
     public override string ModuleDescription => "Automatically removes certain props on map start";
 
-    private List<PropData> _propDataList = new();
-    private string _configPath => Path.Combine(ModuleDirectory, "prop_data.json");
-    private string _currentMap = "";
+    internal List<PropData> PropDataList = [];
+    private string ConfigPath => Path.Combine(ModuleDirectory, "prop_data.json");
+    internal string _currentMap = "";
+
+    private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 
     public required BaseConfigs Config { get; set; }
     public void OnConfigParsed(BaseConfigs config)
@@ -29,60 +33,10 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
 
     public override void Load(bool hotReload)
     {
-        AddCommand("rmprops", "Forcefully removes all registered props for the current map.", (player, commandInfo) =>
-        {
-            if (player == null || commandInfo == null) return;
+        PropDataList = LoadPropData();
 
-            var permissionValidator = new RequiresPermissions("@css/root");
-            if (!permissionValidator.CanExecuteCommand(player))
-            {
-                player.PrintToChat($"{Localizer["Prefix"]} {Localizer["NoPermissions"]}");
-                return;
-            }
-
-            try
-            {
-                var currentMap = Server.MapName;
-                var mapData = _propDataList.FirstOrDefault(data => data.Map.Equals(currentMap, StringComparison.OrdinalIgnoreCase));
-
-                if (mapData == null || mapData.Props.Count == 0)
-                {
-                    player.PrintToChat($"{Localizer["Prefix"]} {Localizer["NoRegisteredProps", currentMap]}");
-                    return;
-                }
-
-                foreach (var propPath in mapData.Props)
-                {
-                    RemoveEntitiesByPath(propPath);
-                }
-
-                player.PrintToChat($"{Localizer["Prefix"]} {Localizer["PropsRemoved", currentMap]}");
-            }
-            catch (Exception ex)
-            {
-                player.PrintToChat($"{Localizer["Prefix"]} {Localizer["ErrorRemovingProps", ex.Message]}");
-            }
-        });
-
-        AddCommand("RMP", "Activates or deactivates props elimination.", (player, commandInfo) =>
-        {
-            if (player == null || commandInfo == null) return;
-
-            var permissionValidator = new RequiresPermissions("@css/root");
-            if (!permissionValidator.CanExecuteCommand(player))
-            {
-                player.PrintToChat($"{Localizer["Prefix"]} {Localizer["NoPermissions"]}");
-                return;
-            }
-
-            _isOnTakeDamageEnabled = !_isOnTakeDamageEnabled;
-
-            var status = _isOnTakeDamageEnabled ? Localizer["Enabled"] : Localizer["Disabled"];
-            var playerName = player?.PlayerName ?? Localizer["Unknown"];
-            player?.PrintToChat($"{Localizer["Prefix"]} {Localizer["TogglePropRemoval", status, playerName]}");
-        });
-
-        _propDataList = LoadPropData();
+        RegisterAllAttributes(new RmpCommand(this));
+        RegisterAllAttributes(new RmpropsCommand(this));
 
         RegisterListener<Listeners.OnMapStart>(mapName =>
         {
@@ -94,29 +48,34 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
             _currentMap = Server.MapName;
         }
 
-        if (Config.removeblood)
+        if (Config.RemoveBlood)
         {
-            HookUserMessage(411, um => { um.Recipients.Clear(); return HookResult.Continue; }, HookMode.Pre);
+            // GE_PlaceDecalEvent (ID 201 in EBaseGameEvents)
+            HookUserMessage(201, um => HookResult.Stop, HookMode.Pre);
         }
 
-        VirtualFunctions.CBaseEntity_TakeDamageOldFunc.Hook(OnTakeDamage, HookMode.Post);
+        RegisterListener<Listeners.OnEntityTakeDamagePre>(OnTakeDamage);
         RegisterEventHandler<EventRoundStart>(OnRoundStart);
-        RegisterListener<Listeners.OnMapEnd>(() => Unload(true));
+        RegisterListener<Listeners.OnMapEnd>(OnMapEnd);
     }
 
-    public override void Unload(bool hotReload)
+    internal bool IsOnTakeDamageEnabled = false;
+
+    private void OnMapEnd()
     {
-        VirtualFunctions.CBaseEntity_TakeDamageOldFunc.Unhook(OnTakeDamage, HookMode.Post);
+        IsOnTakeDamageEnabled = false;
+        PropDataList = LoadPropData();
+        Utils.Logger.LogInfo("MapEnd", "Map ended. Reloaded prop data.");
     }
 
-    private bool _isOnTakeDamageEnabled = false;
-    private HookResult OnTakeDamage(DynamicHook hook)
+    private HookResult OnTakeDamage(CBaseEntity entity, CTakeDamageInfo info)
     {
-        if (!_isOnTakeDamageEnabled) return HookResult.Continue;
+        if (!IsOnTakeDamageEnabled) return HookResult.Continue;
+
+        Utils.Logger.LogDebug("TakeDamage", $"Entity hit: {entity.DesignerName} (Valid: {entity.IsValid})");
 
         try
         {
-            var entity = hook.GetParam<CEntityInstance>(0);
             if (entity == null || !entity.IsValid) return HookResult.Continue;
 
             if (entity.DesignerName.Contains("prop_physics_override") ||
@@ -133,7 +92,7 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"{Localizer["Prefix"]} {Localizer["TakeDamageError", ex.Message]}");
+            Utils.Logger.LogError("TakeDamage", $"{Localizer["TakeDamageError", ex.Message]}");
         }
 
         return HookResult.Continue;
@@ -144,14 +103,14 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
     {
         try
         {
-            var mapData = _propDataList.FirstOrDefault(data => data.Map.Equals(_currentMap, StringComparison.OrdinalIgnoreCase));
+            var mapData = PropDataList.FirstOrDefault(data => data.Map.Equals(_currentMap, StringComparison.OrdinalIgnoreCase));
             if (mapData == null || mapData.Props.Count == 0)
             {
-                Console.WriteLine($"[PropsRemover] No props registered for the map {_currentMap}.");
+                Utils.Logger.LogWarning("RoundStart", $"No props registered for the map {_currentMap}.");
                 return HookResult.Continue;
             }
 
-            Console.WriteLine($"[PropsRemover] Removing registered props on the map {_currentMap}...");
+            Utils.Logger.LogInfo("RoundStart", $"Removing registered props on the map {_currentMap}...");
 
             foreach (var propPath in mapData.Props)
             {
@@ -160,17 +119,17 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PropsRemover] Error in OnRoundStart: {ex.Message}");
+            Utils.Logger.LogError("RoundStart", $"Error in OnRoundStart: {ex.Message}");
         }
 
         return HookResult.Continue;
     }
 
-    private void RemoveEntitiesByPath(string entityPath)
+    internal static void RemoveEntitiesByPath(string entityPath)
     {
         try
         {
-            Console.WriteLine($"[PropsRemover] Attempting to remove entities with path: {entityPath}");
+            Utils.Logger.LogDebug("RemoveEntities", $"Attempting to remove entities with path: {entityPath}");
 
             var entities = GetEntities();
             bool foundEntity = false;
@@ -192,28 +151,28 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
 
             if (!foundEntity)
             {
-                Console.WriteLine($"[PropsRemover] No entity found with path: {entityPath}");
+                Utils.Logger.LogWarning("RemoveEntities", $"No entity found with path: {entityPath}");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PropsRemover] Error removing entities: {ex.Message}");
+            Utils.Logger.LogError("RemoveEntities", $"Error removing entities: {ex.Message}");
         }
     }
 
-    private IEnumerable<CEntityInstance> GetEntities()
+    private static IEnumerable<CEntityInstance> GetEntities()
     {
         try
         {
             var entities = Utilities.GetAllEntities().ToList();
 
-            if (entities == null || !entities.Any())
+            if (entities == null || entities.Count == 0)
             {
-                Console.WriteLine("[PropsRemover] No active entities found.");
-                return Enumerable.Empty<CEntityInstance>();
+                Utils.Logger.LogWarning("GetEntities", "No active entities found.");
+                return [];
             }
 
-            Console.WriteLine($"[PropsRemover] {entities.Count} entities found.");
+            Utils.Logger.LogDebug("GetEntities", $"{entities.Count} entities found.");
 
             var filteredEntities = entities.Where(entity =>
             {
@@ -236,8 +195,8 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PropsRemover] Error getting entities: {ex.Message}");
-            return Enumerable.Empty<CEntityInstance>();
+            Utils.Logger.LogError("GetEntities", $"Error getting entities: {ex.Message}");
+            return [];
         }
     }
 
@@ -250,32 +209,32 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
 
             if (string.IsNullOrEmpty(entityPath))
             {
-                Console.WriteLine("[PropsRemover] Model not available for this prop.");
+                Utils.Logger.LogWarning("SavePropData", "Model not available for this prop.");
                 return;
             }
 
-            var mapData = _propDataList.FirstOrDefault(data => data.Map.Equals(_currentMap, StringComparison.OrdinalIgnoreCase));
+            var mapData = PropDataList.FirstOrDefault(data => data.Map.Equals(_currentMap, StringComparison.OrdinalIgnoreCase));
             if (mapData == null)
             {
                 mapData = new PropData
                 {
                     Map = _currentMap,
-                    Props = new List<string>()
+                    Props = []
                 };
-                _propDataList.Add(mapData);
+                PropDataList.Add(mapData);
             }
 
             if (!mapData.Props.Contains(entityPath))
             {
                 mapData.Props.Add(entityPath);
-                Console.WriteLine($"[PropsRemover] Prop registered: {entityPath}");
+                Utils.Logger.LogInfo("SavePropData", $"Prop registered: {entityPath}");
 
-                File.WriteAllText(_configPath, JsonSerializer.Serialize(_propDataList, new JsonSerializerOptions { WriteIndented = true }));
+                File.WriteAllText(ConfigPath, JsonSerializer.Serialize(PropDataList, _jsonOptions));
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PropsRemover] Error saving prop data: {ex.Message}");
+            Utils.Logger.LogError("SavePropData", $"Error saving prop data: {ex.Message}");
         }
     }
 
@@ -283,28 +242,28 @@ public class PropsRemoverBase : BasePlugin, IPluginConfig<BaseConfigs>
     {
         try
         {
-            if (File.Exists(_configPath))
+            if (File.Exists(ConfigPath))
             {
-                var json = File.ReadAllText(_configPath);
-                Console.WriteLine("[PropsRemover] prop_data.json loaded successfully.");
-                return JsonSerializer.Deserialize<List<PropData>>(json) ?? new List<PropData>();
+                var json = File.ReadAllText(ConfigPath);
+                Utils.Logger.LogInfo("LoadPropData", "prop_data.json loaded successfully.");
+                return JsonSerializer.Deserialize<List<PropData>>(json) ?? [];
             }
             else
             {
-                Console.WriteLine("[PropsRemover] prop_data.json does not exist.");
-                return new List<PropData>();
+                Utils.Logger.LogWarning("LoadPropData", "prop_data.json does not exist.");
+                return [];
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PropsRemover] Error loading data: {ex.Message}");
-            return new List<PropData>();
+            Utils.Logger.LogError("LoadPropData", $"Error loading data: {ex.Message}");
+            return [];
         }
     }
 
-    private class PropData
+    public override void Unload(bool hotReload)
     {
-        public string Map { get; set; } = string.Empty;
-        public List<string> Props { get; set; } = new();
+        RemoveListener<Listeners.OnEntityTakeDamagePre>(OnTakeDamage);
+        Utils.Logger.LogInfo("Unload", "Unloading PropsRemover...");
     }
 }
